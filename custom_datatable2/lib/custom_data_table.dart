@@ -4,6 +4,9 @@
 
 import 'dart:math' as math;
 
+import 'package:custom_datatable/custom_adjust_headerIndex.dart';
+import 'package:custom_datatable/custom_adjust_row_index.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
@@ -21,6 +24,7 @@ import 'package:flutter/widgets.dart';
 // import 'theme.dart';
 // import 'tooltip.dart';
 import "package:flutter/material.dart";
+// import 'package:reorderables/reorderables.dart';
 
 /// Signature for [DataColumn.onSort] callback.
 typedef DataColumnSortCallback = void Function(int columnIndex, bool ascending);
@@ -109,8 +113,8 @@ class CustomDataRow {
     this.onSelectChanged,
     this.color,
     required this.cells,
-  }) : assert(cells != null),
-       key = ValueKey<int?>(index);
+  })  : assert(cells != null),
+        key = ValueKey<int?>(index);
 
   /// A [Key] that uniquely identifies this row. This is used to
   /// ensure that if a row is added or removed, any stateful widgets
@@ -183,7 +187,9 @@ class CustomDataRow {
   ///    <https://material.io/design/interaction/states.html#anatomy>.
   final MaterialStateProperty<Color?>? color;
 
-  bool get _debugInteractive => onSelectChanged != null || cells.any((CustomDataCell cell) => cell._debugInteractive);
+  bool get _debugInteractive =>
+      onSelectChanged != null ||
+      cells.any((CustomDataCell cell) => cell._debugInteractive);
 }
 
 /// The data for a cell of a [DataTable].
@@ -214,7 +220,8 @@ class CustomDataCell {
   }) : assert(child != null);
 
   /// A cell that has no content and has zero width and height.
-  static const CustomDataCell empty = CustomDataCell(SizedBox(width: 0.0, height: 0.0));
+  static const CustomDataCell empty =
+      CustomDataCell(SizedBox(width: 0.0, height: 0.0));
 
   /// The data for the row.
   ///
@@ -283,7 +290,8 @@ class CustomDataCell {
   /// row (if [DataRow.onSelectChanged] is provided).
   final GestureTapCancelCallback? onTapCancel;
 
-  bool get _debugInteractive => onTap != null ||
+  bool get _debugInteractive =>
+      onTap != null ||
       onDoubleTap != null ||
       onLongPress != null ||
       onTapDown != null ||
@@ -427,7 +435,7 @@ class CustomDataCell {
 ///  * [PaginatedDataTable], which shows part of the data in a data table and
 ///    provides controls for paging through the remainder of the data.
 ///  * <https://material.io/design/components/data-tables.html>
-class CustomDataTable extends StatelessWidget {
+class CustomDataTable extends StatefulWidget {
   /// Creates a widget describing a data table.
   ///
   /// The [columns] argument must be a list of as many [DataColumn]
@@ -452,9 +460,35 @@ class CustomDataTable extends StatelessWidget {
   /// The actual sort order can be specified using [sortAscending]; if
   /// the sort order is ascending, this should be true (the default),
   /// otherwise it should be false.
+  ///
+  ///
+  final List<int> customColumnsIndex; //orders of columns
+  final List<int> sortedIndexList;
+  final List<ValueNotifier<bool>> showCheckboxList = <ValueNotifier<bool>>[];
+  final ValueNotifier<bool> showCheckAllbox = ValueNotifier<bool>(false);
+  Function(int column, int showColumnNumber) onSortColumn;
+  int showColumnNumber;
+  final Function(int showColumnNumber) setshowColumnNumber;
+  double Function(int index) getColumnsWidth;
+  String? addColumnTooltip;
+  final double height;
+
+  // bool isSortup;
+
+  ///
   CustomDataTable({
     Key? key,
+    required this.customColumnsIndex,
+    required this.sortedIndexList,
     required this.columns,
+    required this.onSortColumn,
+    required this.showColumnNumber,
+    required this.getColumnsWidth,
+    required this.height,
+    required this.setshowColumnNumber,
+    this.addColumnTooltip,
+    // required this.isSortup,
+    this.sortColumnIndexList,
     this.sortColumnIndex,
     this.sortAscending = true,
     this.onSelectAll,
@@ -472,16 +506,21 @@ class CustomDataTable extends StatelessWidget {
     this.dividerThickness,
     required this.rows,
     this.checkboxHorizontalMargin,
-  }) : assert(columns != null),
-       assert(columns.isNotEmpty),
-       assert(sortColumnIndex == null || (sortColumnIndex >= 0 && sortColumnIndex < columns.length)),
-       assert(sortAscending != null),
-       assert(showCheckboxColumn != null),
-       assert(rows != null),
-       assert(!rows.any((CustomDataRow row) => row.cells.length != columns.length)),
-       assert(dividerThickness == null || dividerThickness >= 0),
-       _onlyTextColumn = _initOnlyTextColumn(columns),
-       super(key: key);
+  })  : assert(columns != null),
+        assert(columns.isNotEmpty),
+        // assert(sortColumnIndex == null ||
+        //     (sortColumnIndex >= 0 && sortColumnIndex < columns.length)),
+        assert(sortColumnIndexList == null ||
+            sortColumnIndexList.every((columnIndex) =>
+                columnIndex >= 0 && columnIndex < columns.length)),
+        assert(sortAscending != null),
+        assert(showCheckboxColumn != null),
+        assert(rows != null),
+        assert(!rows
+            .any((CustomDataRow row) => row.cells.length != columns.length)),
+        assert(dividerThickness == null || dividerThickness >= 0),
+        _onlyTextColumn = _initOnlyTextColumn(columns),
+        super(key: key);
 
   /// The configuration and labels for the columns in the table.
   final List<CustomDataColumn> columns;
@@ -497,7 +536,8 @@ class CustomDataTable extends StatelessWidget {
   ///
   /// When this is null, it implies that the table's sort order does
   /// not correspond to any of the columns.
-  final int? sortColumnIndex;
+  final List<int>? sortColumnIndexList;
+  int? sortColumnIndex;
 
   /// Whether the column mentioned in [sortColumnIndex], if any, is sorted
   /// in ascending order.
@@ -704,34 +744,14 @@ class CustomDataTable extends StatelessWidget {
     for (int index = 0; index < columns.length; index += 1) {
       final CustomDataColumn column = columns[index];
       if (!column.numeric) {
-        if (result != null)
-          return null;
+        if (result != null) return null;
         result = index;
       }
     }
     return result;
   }
 
-  bool get _debugInteractive {
-    return columns.any((CustomDataColumn column) => column._debugInteractive)
-        || rows.any((CustomDataRow row) => row._debugInteractive);
-  }
-
   static final LocalKey _headingRowKey = UniqueKey();
-
-  void _handleSelectAll(bool? checked, bool someChecked) {
-    // If some checkboxes are checked, all checkboxes are selected. Otherwise,
-    // use the new checked value but default to false if it's null.
-    final bool effectiveChecked = someChecked || (checked ?? false);
-    if (onSelectAll != null) {
-      onSelectAll!(effectiveChecked);
-    } else {
-      for (final CustomDataRow row in rows) {
-        if (row.onSelectChanged != null && row.selected != effectiveChecked)
-          row.onSelectChanged!(effectiveChecked);
-      }
-    }
-  }
 
   /// The default height of the heading row.
   static const double _headingRowHeight = 56.0;
@@ -749,26 +769,110 @@ class CustomDataTable extends StatelessWidget {
   /// The default divider thickness.
   static const double _dividerThickness = 1.0;
 
-  static const Duration _sortArrowAnimationDuration = Duration(milliseconds: 150);
+  static const Duration _sortArrowAnimationDuration =
+      Duration(milliseconds: 150);
+
+  @override
+  _CustomDataTableState createState() => _CustomDataTableState();
+}
+
+class _CustomDataTableState extends State<CustomDataTable> {
+  bool get _debugInteractive {
+    return widget.columns
+            .any((CustomDataColumn column) => column._debugInteractive) ||
+        widget.rows.any((CustomDataRow row) => row._debugInteractive);
+  }
+
+  void _handleSelectAll(bool? checked, ValueNotifier<bool> allChecked) {
+    // If some checkboxes are checked, all checkboxes are selected. Otherwise,
+    // use the new checked value but default to false if it's null.
+    // final bool effectiveChecked = someChecked || (checked ?? false);
+    // if (widget.onSelectAll != null) {
+    //   widget.onSelectAll!(effectiveChecked);
+    // } else {
+    //   for (final CustomDataRow row in widget.rows) {
+    //     if (row.onSelectChanged != null &&
+    //         row.selected.value != effectiveChecked)
+    //       row.onSelectChanged!(effectiveChecked);
+    //   }
+    // }
+
+    allChecked.value = !allChecked.value;
+    for (final CustomDataRow row in widget.rows) {
+      row.selected.value = allChecked.value;
+    }
+  }
+
+  void _handleCancleSort() {
+    if (widget.sortColumnIndex != null) {
+      setState(() {
+        widget.sortColumnIndex = null;
+      });
+    }
+  }
 
   Widget _buildCheckbox({
     required BuildContext context,
-    required bool? checked,
+    required ValueNotifier<bool> checked,
+    required ValueNotifier<bool> showCheckbox,
     required VoidCallback? onRowTap,
     required ValueChanged<bool?>? onCheckboxChanged,
     required MaterialStateProperty<Color?>? overlayColor,
     required bool tristate,
   }) {
     final ThemeData themeData = Theme.of(context);
-    final double effectiveHorizontalMargin = horizontalMargin
-      ?? themeData.dataTableTheme.horizontalMargin
-      ?? _horizontalMargin;
-    final double effectiveCheckboxHorizontalMarginStart = checkboxHorizontalMargin
-      ?? themeData.dataTableTheme.checkboxHorizontalMargin
-      ?? effectiveHorizontalMargin;
-    final double effectiveCheckboxHorizontalMarginEnd = checkboxHorizontalMargin
-      ?? themeData.dataTableTheme.checkboxHorizontalMargin
-      ?? effectiveHorizontalMargin / 2.0;
+    final double effectiveHorizontalMargin = widget.horizontalMargin ??
+        themeData.dataTableTheme.horizontalMargin ??
+        CustomDataTable._horizontalMargin;
+    final double effectiveCheckboxHorizontalMarginStart =
+        widget.checkboxHorizontalMargin ??
+            themeData.dataTableTheme.checkboxHorizontalMargin ??
+            effectiveHorizontalMargin;
+    final double effectiveCheckboxHorizontalMarginEnd =
+        widget.checkboxHorizontalMargin ??
+            themeData.dataTableTheme.checkboxHorizontalMargin ??
+            effectiveHorizontalMargin / 2.0;
+
+    // Widget checkbox = ValueListenableBuilder<bool>(
+    //     valueListenable: checked,
+    //     builder: (_, checked, __) {
+    //       return Checkbox(
+    //         // TODO(per): Remove when Checkbox has theme, https://github.com/flutter/flutter/issues/53420.
+    //         activeColor: themeData.colorScheme.primary,
+    //         checkColor: themeData.colorScheme.onPrimary,
+    //         value: checked,
+    //         onChanged: onCheckboxChanged,
+    //         tristate: tristate,
+    //       );
+    //     });
+
+    // Widget showedCheckbox = ValueListenableBuilder<bool>(valueListenable: showCheckbox, builder: (_,showCheckbox,__){
+    //   return SizedBox(child: Visibility(child: checkbox ,visible: showCheckbox || checked.value),width: Checkbox.width,);
+    // });
+
+    Widget shownCheckbox = ValueListenableBuilder<bool>(
+        valueListenable: checked,
+        builder: (_, checked, __) {
+          return ValueListenableBuilder<bool>(
+              valueListenable: showCheckbox,
+              builder: (_, showCheckbox, __) {
+                return SizedBox(
+                  child: Visibility(
+                      child: Checkbox(
+                        // TODO(per): Remove when Checkbox has theme, https://github.com/flutter/flutter/issues/53420.
+                        activeColor: themeData.colorScheme.primary,
+                        checkColor: themeData.colorScheme.onPrimary,
+                        value: checked,
+                        onChanged: onCheckboxChanged,
+                        tristate: tristate,
+                      ),
+                      visible: showCheckbox || checked),
+                  width: Checkbox.width,
+                  height: Checkbox.width,
+                );
+              });
+        });
+
     Widget contents = Semantics(
       container: true,
       child: Padding(
@@ -777,24 +881,18 @@ class CustomDataTable extends StatelessWidget {
           end: effectiveCheckboxHorizontalMarginEnd,
         ),
         child: Center(
-          child: Checkbox(
-            // TODO(per): Remove when Checkbox has theme, https://github.com/flutter/flutter/issues/53420.
-            activeColor: themeData.colorScheme.primary,
-            checkColor: themeData.colorScheme.onPrimary,
-            value: checked,
-            onChanged: onCheckboxChanged,
-            tristate: tristate,
-          ),
+          child: shownCheckbox,
         ),
       ),
     );
     if (onRowTap != null) {
       contents = TableRowInkWell(
-        onTap: onRowTap,
+        onTap: () => onCheckboxChanged!(false),
         child: contents,
         overlayColor: overlayColor,
       );
     }
+
     return TableCell(
       verticalAlignment: TableCellVerticalAlignment.fill,
       child: contents,
@@ -817,32 +915,32 @@ class CustomDataTable extends StatelessWidget {
       textDirection: numeric ? TextDirection.rtl : null,
       children: <Widget>[
         label,
-        if (onSort != null)
-          ...<Widget>[
-            _SortArrow(
-              visible: sorted,
-              up: sorted ? ascending : null,
-              duration: _sortArrowAnimationDuration,
-            ),
-            const SizedBox(width: _sortArrowPadding),
-          ],
+        if (sorted) ...<Widget>[
+          _SortArrow(
+            visible: sorted,
+            up: sorted ? ascending : null,
+            duration: CustomDataTable._sortArrowAnimationDuration,
+          ),
+          const SizedBox(width: CustomDataTable._sortArrowPadding),
+        ],
       ],
     );
 
-    final TextStyle effectiveHeadingTextStyle = headingTextStyle
-      ?? themeData.dataTableTheme.headingTextStyle
-      ?? themeData.textTheme.subtitle2!;
-    final double effectiveHeadingRowHeight = headingRowHeight
-      ?? themeData.dataTableTheme.headingRowHeight
-      ?? _headingRowHeight;
+    final TextStyle effectiveHeadingTextStyle = widget.headingTextStyle ??
+        themeData.dataTableTheme.headingTextStyle ??
+        themeData.textTheme.subtitle2!;
+    final double effectiveHeadingRowHeight = widget.headingRowHeight ??
+        themeData.dataTableTheme.headingRowHeight ??
+        CustomDataTable._headingRowHeight;
     label = Container(
       padding: padding,
       height: effectiveHeadingRowHeight,
-      alignment: numeric ? Alignment.centerRight : AlignmentDirectional.centerStart,
+      alignment:
+          numeric ? Alignment.centerRight : AlignmentDirectional.centerStart,
       child: AnimatedDefaultTextStyle(
         style: effectiveHeadingTextStyle,
         softWrap: false,
-        duration: _sortArrowAnimationDuration,
+        duration: CustomDataTable._sortArrowAnimationDuration,
         child: label,
       ),
     );
@@ -884,23 +982,26 @@ class CustomDataTable extends StatelessWidget {
       label = Expanded(child: label);
       label = Row(
         textDirection: numeric ? TextDirection.rtl : null,
-        children: <Widget>[ label, icon ],
+        children: <Widget>[label, icon],
       );
     }
 
-    final TextStyle effectiveDataTextStyle = dataTextStyle
-      ?? themeData.dataTableTheme.dataTextStyle
-      ?? themeData.textTheme.bodyText2!;
-    final double effectiveDataRowHeight = dataRowHeight
-      ?? themeData.dataTableTheme.dataRowHeight
-      ?? kMinInteractiveDimension;
+    final TextStyle effectiveDataTextStyle = widget.dataTextStyle ??
+        themeData.dataTableTheme.dataTextStyle ??
+        themeData.textTheme.bodyText2!;
+    final double effectiveDataRowHeight = widget.dataRowHeight ??
+        themeData.dataTableTheme.dataRowHeight ??
+        kMinInteractiveDimension;
     label = Container(
       padding: padding,
       height: effectiveDataRowHeight,
-      alignment: numeric ? Alignment.centerRight : AlignmentDirectional.centerStart,
+      alignment:
+          numeric ? Alignment.centerRight : AlignmentDirectional.centerStart,
       child: DefaultTextStyle(
         style: effectiveDataTextStyle.copyWith(
-          color: placeholder ? effectiveDataTextStyle.color!.withOpacity(0.6) : null,
+          color: placeholder
+              ? effectiveDataTextStyle.color!.withOpacity(0.6)
+              : null,
         ),
         child: DropdownButtonHideUnderline(child: label),
       ),
@@ -924,6 +1025,7 @@ class CustomDataTable extends StatelessWidget {
         onTap: onSelectChanged,
         child: label,
         overlayColor: overlayColor,
+        onHover: (value) => {}, //print("onHover $value"), //on row Hover
       );
     }
     return label;
@@ -934,69 +1036,91 @@ class CustomDataTable extends StatelessWidget {
     assert(!_debugInteractive || debugCheckHasMaterial(context));
 
     final ThemeData theme = Theme.of(context);
-    final MaterialStateProperty<Color?>? effectiveHeadingRowColor = headingRowColor
-      ?? theme.dataTableTheme.headingRowColor;
-    final MaterialStateProperty<Color?>? effectiveDataRowColor = dataRowColor
-      ?? theme.dataTableTheme.dataRowColor;
-    final MaterialStateProperty<Color?> defaultRowColor = MaterialStateProperty.resolveWith(
+    final MaterialStateProperty<Color?>? effectiveHeadingRowColor =
+        widget.headingRowColor ?? theme.dataTableTheme.headingRowColor;
+    final MaterialStateProperty<Color?>? effectiveDataRowColor =
+        widget.dataRowColor ?? theme.dataTableTheme.dataRowColor;
+    final MaterialStateProperty<Color?> defaultRowColor =
+        MaterialStateProperty.resolveWith(
       (Set<MaterialState> states) {
         if (states.contains(MaterialState.selected))
           return theme.colorScheme.primary.withOpacity(0.08);
         return null;
       },
     );
-    final bool anyRowSelectable = rows.any((CustomDataRow row) => row.onSelectChanged != null);
-    final bool displayCheckboxColumn = showCheckboxColumn && anyRowSelectable;
-    final Iterable<CustomDataRow> rowsWithCheckbox = displayCheckboxColumn ?
-      rows.where((CustomDataRow row) => row.onSelectChanged != null) : <CustomDataRow>[];
-    final Iterable<CustomDataRow> rowsChecked = rowsWithCheckbox.where((CustomDataRow row) => row.selected.value);
-    final bool allChecked = displayCheckboxColumn && rowsChecked.length == rowsWithCheckbox.length;
+    final bool anyRowSelectable =
+        widget.rows.any((CustomDataRow row) => row.onSelectChanged != null);
+    final bool displayCheckboxColumn =
+        widget.showCheckboxColumn && anyRowSelectable;
+    final Iterable<CustomDataRow> rowsWithCheckbox = displayCheckboxColumn
+        ? widget.rows.where((CustomDataRow row) => row.onSelectChanged != null)
+        : <CustomDataRow>[];
+    final Iterable<CustomDataRow> rowsChecked =
+        rowsWithCheckbox.where((CustomDataRow row) => row.selected.value);
+    final ValueNotifier<bool> allChecked = ValueNotifier<bool>(
+        displayCheckboxColumn && rowsChecked.length == rowsWithCheckbox.length);
     final bool anyChecked = displayCheckboxColumn && rowsChecked.isNotEmpty;
-    final bool someChecked = anyChecked && !allChecked;
-    final double effectiveHorizontalMargin = horizontalMargin
-      ?? theme.dataTableTheme.horizontalMargin
-      ?? _horizontalMargin;
-    final double effectiveCheckboxHorizontalMarginStart = checkboxHorizontalMargin
-      ?? theme.dataTableTheme.checkboxHorizontalMargin
-      ?? effectiveHorizontalMargin;
-    final double effectiveCheckboxHorizontalMarginEnd = checkboxHorizontalMargin
-      ?? theme.dataTableTheme.checkboxHorizontalMargin
-      ?? effectiveHorizontalMargin / 2.0;
-    final double effectiveColumnSpacing = columnSpacing
-      ?? theme.dataTableTheme.columnSpacing
-      ?? _columnSpacing;
+    final bool someChecked = anyChecked && !allChecked.value;
+    final double effectiveHorizontalMargin = widget.horizontalMargin ??
+        theme.dataTableTheme.horizontalMargin ??
+        CustomDataTable._horizontalMargin;
+    final double effectiveCheckboxHorizontalMarginStart =
+        widget.checkboxHorizontalMargin ??
+            theme.dataTableTheme.checkboxHorizontalMargin ??
+            effectiveHorizontalMargin;
+    final double effectiveCheckboxHorizontalMarginEnd =
+        widget.checkboxHorizontalMargin ??
+            theme.dataTableTheme.checkboxHorizontalMargin ??
+            effectiveHorizontalMargin / 2.0;
+    final double effectiveColumnSpacing = widget.columnSpacing ??
+        theme.dataTableTheme.columnSpacing ??
+        CustomDataTable._columnSpacing;
 
-    final List<TableColumnWidth> tableColumns = List<TableColumnWidth>.filled(columns.length + (displayCheckboxColumn ? 1 : 0), const _NullTableColumnWidth());
+    final List<TableColumnWidth> tableColumns = List<TableColumnWidth>.filled(
+        widget.columns.length + (displayCheckboxColumn ? 1 : 0),
+        const _NullTableColumnWidth());
     final List<TableRow> tableRows = List<TableRow>.generate(
-      rows.length + 1, // the +1 is for the header row
+      widget.rows.length + 1, // the +1 is for the header row
       (int index) {
-        final bool isSelected = index > 0 && rows[index - 1].selected.value;
-        final bool isDisabled = index > 0 && anyRowSelectable && rows[index - 1].onSelectChanged == null;
+        final bool isSelected =
+            index > 0 && widget.rows[index - 1].selected.value;
+        final bool isDisabled = index > 0 &&
+            anyRowSelectable &&
+            widget.rows[index - 1].onSelectChanged == null;
         final Set<MaterialState> states = <MaterialState>{
-          if (isSelected)
-            MaterialState.selected,
-          if (isDisabled)
-            MaterialState.disabled,
+          if (isSelected) MaterialState.selected,
+          if (isDisabled) MaterialState.disabled,
         };
-        final Color? resolvedDataRowColor = index > 0 ? (rows[index - 1].color ?? effectiveDataRowColor)?.resolve(states) : null;
-        final Color? resolvedHeadingRowColor = effectiveHeadingRowColor?.resolve(<MaterialState>{});
-        final Color? rowColor = index > 0 ? resolvedDataRowColor : resolvedHeadingRowColor;
+        final Color? resolvedDataRowColor = index > 0
+            ? (widget.rows[index - 1].color ?? effectiveDataRowColor)
+                ?.resolve(states)
+            : null;
+        final Color? resolvedHeadingRowColor =
+            effectiveHeadingRowColor?.resolve(<MaterialState>{});
+        final Color? rowColor =
+            index > 0 ? resolvedDataRowColor : resolvedHeadingRowColor;
         final BorderSide borderSide = Divider.createBorderSide(
           context,
-          width: dividerThickness
-            ?? theme.dataTableTheme.dividerThickness
-            ?? _dividerThickness,
+          width: widget.dividerThickness ??
+              theme.dataTableTheme.dividerThickness ??
+              CustomDataTable._dividerThickness,
         );
-        final Border? border = showBottomBorder
-          ? Border(bottom: borderSide)
-          : index == 0 ? null : Border(top: borderSide);
+        final Border? border = widget.showBottomBorder
+            ? Border(bottom: borderSide)
+            : index == 0
+                ? null
+                : Border(top: borderSide);
         return TableRow(
-          key: index == 0 ? _headingRowKey : rows[index - 1].key,
+          key: index == 0
+              ? CustomDataTable._headingRowKey
+              : widget.rows[index - 1].key,
           decoration: BoxDecoration(
             border: border,
             color: rowColor ?? defaultRowColor.resolve(states),
           ),
-          children: List<Widget>.filled(tableColumns.length, const _NullWidget()),
+          children: List<Widget>.filled(
+              widget.showColumnNumber + (widget.showCheckboxColumn ? 1 : 0),
+              const _NullWidget()),
         );
       },
     );
@@ -1005,22 +1129,37 @@ class CustomDataTable extends StatelessWidget {
 
     int displayColumnIndex = 0;
     if (displayCheckboxColumn) {
-      tableColumns[0] = FixedColumnWidth(effectiveCheckboxHorizontalMarginStart + Checkbox.width + effectiveCheckboxHorizontalMarginEnd);
+      tableColumns[0] = FixedColumnWidth(
+          effectiveCheckboxHorizontalMarginStart +
+              Checkbox.width +
+              effectiveCheckboxHorizontalMarginEnd);
       tableRows[0].children![0] = _buildCheckbox(
         context: context,
-        checked: someChecked ? null : allChecked,
+        checked: allChecked, //someChecked ? null : allChecked
+        showCheckbox: widget.showCheckAllbox,
         onRowTap: null,
-        onCheckboxChanged: (bool? checked) => _handleSelectAll(checked, someChecked),
+        onCheckboxChanged: (bool? checked) =>
+            _handleSelectAll(checked, allChecked),
         overlayColor: null,
         tristate: true,
       );
       rowIndex = 1;
-      for (final CustomDataRow row in rows) {
+      bool showCheckboxNotBuilded = widget.showCheckboxList.isEmpty;
+      for (final CustomDataRow row in widget.rows) {
+        final ValueNotifier<bool> showCheckbox = ValueNotifier<bool>(false);
+        if (showCheckboxNotBuilded) widget.showCheckboxList.add(showCheckbox);
         tableRows[rowIndex].children![0] = _buildCheckbox(
           context: context,
-          checked: row.selected.value,
-          onRowTap: () => row.onSelectChanged?.call(!row.selected.value),
-          onCheckboxChanged: row.onSelectChanged,
+          checked: row.selected,
+          showCheckbox: showCheckboxNotBuilded
+              ? showCheckbox
+              : widget.showCheckboxList[rowIndex - 1],
+          onRowTap:
+              () {}, //print("custom row handler"), //Taprow rowTap onRowTap
+          onCheckboxChanged: (value) {
+            row.onSelectChanged!(value);
+            allChecked.value = widget.rows.every((row) => row.selected.value);
+          },
           overlayColor: row.color ?? effectiveDataRowColor,
           tristate: false,
         );
@@ -1029,11 +1168,19 @@ class CustomDataTable extends StatelessWidget {
       displayColumnIndex += 1;
     }
 
-    for (int dataColumnIndex = 0; dataColumnIndex < columns.length; dataColumnIndex += 1) {
-      final CustomDataColumn column = columns[dataColumnIndex];
+    for (int columnIndex = 0;
+        columnIndex < widget.showColumnNumber;
+        columnIndex += 1) {
+      final dataColumnIndex =
+          widget.customColumnsIndex[columnIndex]; // reorder columnindex
+
+      final CustomDataColumn column = widget.columns[dataColumnIndex];
+      final double columnWidth = widget.getColumnsWidth(dataColumnIndex);
 
       final double paddingStart;
-      if (dataColumnIndex == 0 && displayCheckboxColumn && checkboxHorizontalMargin != null) {
+      if (dataColumnIndex == 0 &&
+          displayCheckboxColumn &&
+          widget.checkboxHorizontalMargin != null) {
         paddingStart = effectiveHorizontalMargin;
       } else if (dataColumnIndex == 0 && displayCheckboxColumn) {
         paddingStart = effectiveHorizontalMargin / 2.0;
@@ -1044,39 +1191,61 @@ class CustomDataTable extends StatelessWidget {
       }
 
       final double paddingEnd;
-      if (dataColumnIndex == columns.length - 1) {
+      if (dataColumnIndex == widget.columns.length - 1) {
         paddingEnd = effectiveHorizontalMargin;
       } else {
         paddingEnd = effectiveColumnSpacing / 2.0;
       }
 
       final EdgeInsetsDirectional padding = EdgeInsetsDirectional.only(
-        start: paddingStart,
-        end: paddingEnd,
+        start: effectiveColumnSpacing / 2.0, //paddingStart,
+        end: effectiveColumnSpacing / 2.0, //paddingEnd,
       );
-      if (dataColumnIndex == _onlyTextColumn) {
-        tableColumns[displayColumnIndex] = const IntrinsicColumnWidth(flex: 1.0);
+      if (dataColumnIndex == widget._onlyTextColumn) {
+        tableColumns[displayColumnIndex] =
+            const IntrinsicColumnWidth(flex: 1.0);
       } else {
         tableColumns[displayColumnIndex] = const IntrinsicColumnWidth();
       }
       tableRows[0].children![displayColumnIndex] = _buildHeadingCell(
         context: context,
         padding: padding,
-        label: column.label,
+        label: SizedBox(
+          child: column.label,
+          width: columnWidth,
+        ),
         tooltip: column.tooltip,
         numeric: column.numeric,
-        onSort: column.onSort != null ? () => column.onSort!(dataColumnIndex, sortColumnIndex != dataColumnIndex || !sortAscending) : null,
-        sorted: dataColumnIndex == sortColumnIndex,
-        ascending: sortAscending,
+        onSort: column.onSort != null
+            ? () => column.onSort!(
+                dataColumnIndex,
+                widget.sortColumnIndex != dataColumnIndex ||
+                    !widget.sortAscending)
+            : null,
+        sorted: dataColumnIndex == widget.sortColumnIndex,
+        ascending: widget.sortAscending,
         overlayColor: effectiveHeadingRowColor,
       );
       rowIndex = 1;
-      for (final CustomDataRow row in rows) {
+      for (final CustomDataRow row in widget.rows) {
         final CustomDataCell cell = row.cells[dataColumnIndex];
         tableRows[rowIndex].children![displayColumnIndex] = _buildDataCell(
           context: context,
           padding: padding,
-          label: cell.child,
+          label: widget.customColumnsIndex[displayColumnIndex -
+                      (widget.showCheckboxColumn ? 1 : 0)] ==
+                  widget.sortColumnIndex
+              ? Row(
+                  children: [
+                    SizedBox(
+                        child: cell.child,
+                        width: widget.getColumnsWidth(dataColumnIndex) + 16),
+                  ],
+                )
+              : SizedBox(
+                  child: cell.child,
+                  width: widget.getColumnsWidth(dataColumnIndex),
+                ),
           numeric: column.numeric,
           placeholder: cell.placeholder,
           showEditIcon: cell.showEditIcon,
@@ -1085,7 +1254,7 @@ class CustomDataTable extends StatelessWidget {
           onLongPress: cell.onLongPress,
           onTapCancel: cell.onTapCancel,
           onTapDown: cell.onTapDown,
-          onSelectChanged: () => row.onSelectChanged?.call(!row.selected.value),
+          onSelectChanged: () {}, //=> print("select cell"), //cellTap
           overlayColor: row.color ?? effectiveDataRowColor,
         );
         rowIndex += 1;
@@ -1093,13 +1262,335 @@ class CustomDataTable extends StatelessWidget {
       displayColumnIndex += 1;
     }
 
+    // Widget addColumnButton = PopupMenuButton<int>(
+    //     itemBuilder: (context) => widget.customColumnsIndex
+    //         .sublist(widget.showColumnNumber)
+    //         .map<PopupMenuEntry<int>>((value) =>
+    //             PopupMenuItem(child: widget.columns[value].label, value: value))
+    //         .toList(),
+    //     onSelected: (index) {
+    //       setState(() {
+    //         widget.customColumnsIndex.remove(index);
+    //         widget.customColumnsIndex.insert(widget.showColumnNumber++, index);
+    //       });
+    //     });
+
+    // Widget dropColumnBox = DragTarget(
+    //   builder: (_, __, ___) => addColumnButton,
+    //   onAccept: (ValueKey item) {
+    //     setState(() {
+    //       widget.showColumnNumber--;
+    //     });
+    //     print(widget.customColumnsIndex);
+    //     print(widget.showColumnNumber);
+    //   },
+    // );
+
+    Widget buildAddColumnCheckbox(
+        ValueNotifier<bool> checkedNotifier, Widget heading) {
+      return ValueListenableBuilder<bool>(
+          valueListenable: checkedNotifier,
+          builder: (_, checked, __) {
+            return InkWell(
+              child: Row(
+                children: [
+                  Checkbox(
+                    // TODO(per): Remove when Checkbox has theme, https://github.com/flutter/flutter/issues/53420.
+                    activeColor: Theme.of(context).colorScheme.primary,
+                    checkColor: Theme.of(context).colorScheme.onPrimary,
+                    value: checked,
+                    onChanged: (_) {
+                      checkedNotifier.value = !checkedNotifier.value;
+                    },
+                    tristate: false,
+                  ),
+                  SizedBox(
+                    width: 20,
+                  ),
+                  heading,
+                ],
+              ),
+              onTap: () => checkedNotifier.value = !checkedNotifier.value,
+            );
+          });
+    }
+
+    Widget buildAddColumnBox(
+        ValueNotifier<bool> checkedNotifier, Widget heading) {
+      return InkWell(
+        child: Container(
+          padding: EdgeInsets.all(10),
+          child: Row(children: [
+            ValueListenableBuilder<bool>(
+                valueListenable: checkedNotifier,
+                builder: (_, checked, __) {
+                  return checked
+                      ? Icon(Icons.check, size: 19, color: Colors.green)
+                      : SizedBox(
+                          width: 19,
+                        );
+                }),
+            SizedBox(
+              width: 20,
+            ),
+            heading,
+          ]),
+        ),
+        onTap: () => checkedNotifier.value = !checkedNotifier.value,
+      );
+    }
+
+    List<ValueNotifier<bool>> shownHeader = List.generate(
+        widget.columns.length,
+        (index) => ValueNotifier<bool>(widget.customColumnsIndex
+            .sublist(0, widget.showColumnNumber)
+            .contains(index)));
+
+    // List<Widget> headerMenu = widget.columns
+    //       .map<Widget>((value) => buildAddColumnCheckbox(
+    //           widget.customColumnsIndex
+    //               .sublist(0, widget.showColumnNumber)
+    //               .contains(value),
+    //           value.label))
+    //       .toList();
+
+    List<Widget> headerMenu = List.generate(
+        widget.columns.length,
+        (index) => buildAddColumnBox(
+            //buildAddColumnCheckbox(
+            shownHeader[index],
+            widget.columns[index].label));
+
+    // Widget headerMenu = Column(
+    //   children:
+    // );
+
+    Widget addColumnButton = PopupMenuButton<int>(
+      tooltip: widget.addColumnTooltip,
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          child: Column(children: headerMenu),
+        )
+      ],
+      onCanceled: () {
+        List<int> toAdd = [];
+        List<int> toRemove = [];
+        for (int index = 0; index < widget.columns.length; index++) {
+          bool isShown = widget.customColumnsIndex
+              .sublist(0, widget.showColumnNumber)
+              .contains(index);
+          // print("$index $isShown");
+          if (isShown != shownHeader[index].value) {
+            if (shownHeader[index].value) {
+              toAdd.add(index);
+            } else {
+              toRemove.add(index);
+            }
+          }
+        }
+        // print(toAdd);
+        // print(toRemove);
+
+        widget.customColumnsIndex.removeWhere(
+            (index) => toRemove.contains(index) || toAdd.contains(index));
+
+        widget.showColumnNumber -= toRemove.length;
+
+        for (int index in toAdd) {
+          widget.customColumnsIndex.insert(widget.showColumnNumber++, index);
+        }
+
+        widget.customColumnsIndex.addAll(toRemove);
+        // print(widget.customColumnsIndex);
+        widget.setshowColumnNumber(widget.showColumnNumber);
+        setState(() {});
+      },
+    );
+
+    // Widget addColumnButton = TextButton(onPressed: (){
+    //   final PopupMenuThemeData popupMenuTheme = PopupMenuTheme.of(context);
+    // final RenderBox button = context.findRenderObject()! as RenderBox;
+    // final RenderBox overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    // final RelativeRect position = RelativeRect.fromRect(
+    //   Rect.fromPoints(
+    //     button.localToGlobal(Offset.zero, ancestor: overlay),
+    //     button.localToGlobal(button.size.bottomRight (Offset.zero) + Offset.zero, ancestor: overlay),
+    //   ),
+    //   Offset.zero & overlay.size,
+    // );
+    // final List<PopupMenuEntry<int>> items = [
+    //   PopupMenuItem(
+    //     child: Text("data"),
+    //     value: 5,
+    //   ),
+    //   PopupMenuItem(
+    //     child: Text("data"),
+    //     value: 4,
+    //   ),
+    // ];
+    // // Only show the menu if there is something to show
+    // if (items.isNotEmpty) {
+    //   // showMenu<int?>(
+    //   //   context: context,
+    //   //   elevation: popupMenuTheme.elevation,
+    //   //   items: items,
+    //   //   initialValue: 0,
+    //   //   position: position,
+    //   //   shape: popupMenuTheme.shape,
+    //   //   color: popupMenuTheme.color,
+    //   // );
+    //   showMenu(context: context, position: position, items: items);
+    //   // showDialog(context: context, builder: (context) => AlertDialog(
+    //   //   content: InkResponse(
+    //   //     onTap: () {
+    //   //       Navigator.of(context).pop();
+    //   //     },
+    //   //     child: CircleAvatar(
+    //   //       child: Icon(Icons.close),
+    //   //       backgroundColor: Colors.red,
+    //   //     ),
+    //   //   ),
+    //   // ));
+    //   }
+    // }, child: Text("hello world"));
+
+    // Widget addColumnButton = IconButton(
+    //   onPressed: () {
+    //     // showModalBottomSheet(context: context, builder: (context) => Card());
+    //     showMenu(context: context, position: RelativeRect.fill, items: items)
+    //   },
+    //   icon: Icon(Icons.add_box),
+    // );
+
+    Widget header = Row(children: [
+      if (widget.showCheckboxColumn)
+        InkWell(
+          child: (tableRows[0].children![0] as TableCell).child,
+          onHover: (isHover) => widget.showCheckAllbox.value = isHover,
+          onTap: () {},
+          hoverColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+        ),
+      CustomAdjustHeaderIndex(
+        columns: widget.showCheckboxColumn
+            ? tableRows[0].children!.sublist(1, widget.showColumnNumber + 1)
+            : tableRows[0].children!.sublist(0, widget.showColumnNumber),
+        moveHeadingIndex: (oldIndex, newIndex) {
+          // print(widget.customColumnsIndex);
+
+          int colIndex = widget.customColumnsIndex.removeAt(oldIndex);
+          widget.customColumnsIndex.insert(newIndex, colIndex);
+
+          // print(widget.customColumnsIndex);
+          setState(() {});
+        },
+        onRowHover: (isHover) => widget.showCheckAllbox.value = isHover,
+        sortColumnIndexList: widget.sortColumnIndexList,
+        columnIndexlist: widget.customColumnsIndex,
+        onSortIndex: (index) {
+          widget.onSortColumn(index, widget.showColumnNumber);
+        },
+      ),
+      addColumnButton,
+    ]);
+
+    double width = 0;
+
+    widget.customColumnsIndex.sublist(0, widget.showColumnNumber).forEach(
+        (index) =>
+            width += widget.getColumnsWidth(index) + effectiveColumnSpacing);
+
+    if (widget.showCheckboxColumn)
+      width += effectiveHorizontalMargin * 2 + Checkbox.width;
+    if (widget.customColumnsIndex
+        .sublist(0, widget.showColumnNumber)
+        .contains(widget.sortColumnIndex)) width += 20;
+
+    Widget table = CustomAdjustRowIndex(
+      width: width + 27.5,
+      height: widget.height,
+      cancleSort: _handleCancleSort,
+      columns: List.generate(
+        tableRows.length - 1,
+        (index) => widget.showCheckboxColumn
+            ? ValueListenableBuilder<bool>(
+                valueListenable: widget.rows[index].selected,
+                builder: (_, selected, __) {
+                  final bool isSelected = widget.rows[index].selected.value;
+                  final bool isDisabled = index > 0 &&
+                      anyRowSelectable &&
+                      widget.rows[index].onSelectChanged == null;
+                  final Set<MaterialState> states = <MaterialState>{
+                    if (isSelected) MaterialState.selected,
+                    if (isDisabled) MaterialState.disabled,
+                  };
+                  final BorderSide borderSide = Divider.createBorderSide(
+                    context,
+                    width: widget.dividerThickness ??
+                        theme.dataTableTheme.dividerThickness ??
+                        CustomDataTable._dividerThickness,
+                  );
+                  final Border? border = widget.showBottomBorder
+                      ? Border(bottom: borderSide)
+                      : index == 0
+                          ? null
+                          : Border(top: borderSide);
+                  final Color? resolvedDataRowColor = index > 0
+                      ? (widget.rows[index - 1].color ?? effectiveDataRowColor)
+                          ?.resolve(states)
+                      : null;
+                  final Color? resolvedHeadingRowColor =
+                      effectiveHeadingRowColor?.resolve(<MaterialState>{});
+                  final Color? rowColor = index > 0
+                      ? resolvedDataRowColor
+                      : resolvedHeadingRowColor;
+                  tableRows[index + 1] = TableRow(
+                    key: widget.rows[index].key,
+                    decoration: BoxDecoration(
+                      border: border,
+                      color: rowColor ?? defaultRowColor.resolve(states),
+                    ),
+                    children: tableRows[index + 1]
+                        .children!
+                        .sublist(0, widget.showColumnNumber + 1),
+                  );
+
+                  return InkWell(
+                    child: Table(
+                      columnWidths: tableColumns.asMap(),
+                      children: [tableRows[index + 1]],
+                      key: UniqueKey(),
+                    ),
+                    onTap: () {},
+                    onHover: widget.showCheckboxColumn
+                        ? (isHover) =>
+                            widget.showCheckboxList[index].value = isHover
+                        : null,
+                  );
+                })
+            : Table(
+                columnWidths: tableColumns.asMap(),
+                children: [tableRows[index + 1]],
+                key: UniqueKey(),
+              ),
+      ),
+      sortedIndexList: widget.sortedIndexList,
+    );
+
     return Container(
-      decoration: decoration ?? theme.dataTableTheme.decoration,
+      decoration: widget.decoration ?? theme.dataTableTheme.decoration,
       child: Material(
         type: MaterialType.transparency,
-        child: Table(
-          columnWidths: tableColumns.asMap(),
-          children: tableRows,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              header,
+              table,
+            ],
+          ),
         ),
       ),
     );
@@ -1135,17 +1626,19 @@ class TableRowInkWell extends InkResponse {
     GestureLongPressCallback? onLongPress,
     ValueChanged<bool>? onHighlightChanged,
     MaterialStateProperty<Color?>? overlayColor,
+    Function(bool)? onHover,
   }) : super(
-    key: key,
-    child: child,
-    onTap: onTap,
-    onDoubleTap: onDoubleTap,
-    onLongPress: onLongPress,
-    onHighlightChanged: onHighlightChanged,
-    containedInkWell: true,
-    highlightShape: BoxShape.rectangle,
-    overlayColor: overlayColor,
-  );
+          key: key,
+          child: child,
+          onTap: onTap,
+          onDoubleTap: onDoubleTap,
+          onLongPress: onLongPress,
+          onHighlightChanged: onHighlightChanged,
+          containedInkWell: true,
+          highlightShape: BoxShape.rectangle,
+          overlayColor: overlayColor,
+          onHover: onHover,
+        );
 
   @override
   RectCallback getRectCallback(RenderBox referenceBox) {
@@ -1160,15 +1653,15 @@ class TableRowInkWell extends InkResponse {
         table = table.parent;
       }
       if (table is RenderTable) {
-        final TableCellParentData cellParentData = cell.parentData! as TableCellParentData;
+        final TableCellParentData cellParentData =
+            cell.parentData! as TableCellParentData;
         assert(cellParentData.y != null);
         final Rect rect = table.getRowBox(cellParentData.y!);
         // The rect is in the table's coordinate space. We need to change it to the
         // TableRowInkWell's coordinate space.
         table.applyPaintTransform(cell, transform);
         final Offset? offset = MatrixUtils.getAsTranslation(transform);
-        if (offset != null)
-          return rect.shift(-offset);
+        if (offset != null) return rect.shift(-offset);
       }
       return Rect.zero;
     };
@@ -1209,8 +1702,9 @@ class _SortArrowState extends State<_SortArrow> with TickerProviderStateMixin {
 
   bool? _up;
 
-  static final Animatable<double> _turnTween = Tween<double>(begin: 0.0, end: math.pi)
-    .chain(CurveTween(curve: Curves.easeIn));
+  static final Animatable<double> _turnTween =
+      Tween<double>(begin: 0.0, end: math.pi)
+          .chain(CurveTween(curve: Curves.easeIn));
 
   @override
   void initState() {
@@ -1221,8 +1715,7 @@ class _SortArrowState extends State<_SortArrow> with TickerProviderStateMixin {
         vsync: this,
       ),
       curve: Curves.fastOutSlowIn,
-    )
-    ..addListener(_rebuild);
+    )..addListener(_rebuild);
     _opacityController.value = widget.visible ? 1.0 : 0.0;
     _orientationController = AnimationController(
       duration: widget.duration,
@@ -1231,8 +1724,7 @@ class _SortArrowState extends State<_SortArrow> with TickerProviderStateMixin {
     _orientationAnimation = _orientationController.drive(_turnTween)
       ..addListener(_rebuild)
       ..addStatusListener(_resetOrientationAnimation);
-    if (widget.visible)
-      _orientationOffset = widget.up! ? 0.0 : math.pi;
+    if (widget.visible) _orientationOffset = widget.up! ? 0.0 : math.pi;
   }
 
   void _rebuild() {
@@ -1245,7 +1737,8 @@ class _SortArrowState extends State<_SortArrow> with TickerProviderStateMixin {
     if (status == AnimationStatus.completed) {
       assert(_orientationAnimation.value == math.pi);
       _orientationOffset += math.pi;
-      _orientationController.value = 0.0; // TODO(ianh): This triggers a pointless rebuild.
+      _orientationController.value =
+          0.0; // TODO(ianh): This triggers a pointless rebuild.
     }
   }
 
@@ -1255,7 +1748,8 @@ class _SortArrowState extends State<_SortArrow> with TickerProviderStateMixin {
     bool skipArrow = false;
     final bool? newUp = widget.up ?? _up;
     if (oldWidget.visible != widget.visible) {
-      if (widget.visible && (_opacityController.status == AnimationStatus.dismissed)) {
+      if (widget.visible &&
+          (_opacityController.status == AnimationStatus.dismissed)) {
         _orientationController.stop();
         _orientationController.value = 0.0;
         _orientationOffset = newUp! ? 0.0 : math.pi;
@@ -1292,8 +1786,9 @@ class _SortArrowState extends State<_SortArrow> with TickerProviderStateMixin {
     return Opacity(
       opacity: _opacityAnimation.value,
       child: Transform(
-        transform: Matrix4.rotationZ(_orientationOffset + _orientationAnimation.value)
-                             ..setTranslationRaw(0.0, _arrowIconBaselineOffset, 0.0),
+        transform:
+            Matrix4.rotationZ(_orientationOffset + _orientationAnimation.value)
+              ..setTranslationRaw(0.0, _arrowIconBaselineOffset, 0.0),
         alignment: Alignment.center,
         child: const Icon(
           Icons.arrow_upward,
@@ -1308,10 +1803,12 @@ class _NullTableColumnWidth extends TableColumnWidth {
   const _NullTableColumnWidth();
 
   @override
-  double maxIntrinsicWidth(Iterable<RenderBox> cells, double containerWidth) => throw UnimplementedError();
+  double maxIntrinsicWidth(Iterable<RenderBox> cells, double containerWidth) =>
+      throw UnimplementedError();
 
   @override
-  double minIntrinsicWidth(Iterable<RenderBox> cells, double containerWidth) => throw UnimplementedError();
+  double minIntrinsicWidth(Iterable<RenderBox> cells, double containerWidth) =>
+      throw UnimplementedError();
 }
 
 class _NullWidget extends Widget {

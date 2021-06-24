@@ -33,10 +33,10 @@ class __DemoTableBodyState extends State<_DemoTableBody> {
   @override
   Widget build(BuildContext context) {
     //Obtain the data to be displayed from the Derived DataTableSource
-    final n_col = 7;
-    final n_row = 7;
+    final n_col = 40;
+    final n_row = 1000;
 
-    var dts = DTS(n_col: n_col,n_row: n_row);
+    var dts = DTS(n_col: n_col, n_row: n_row);
 
     // dts.rowcount provides the actual data length, ForInstance, If we have 7 data stored in the DataTableSource Object, then we will get 12 as dts.rowCount
 
@@ -56,34 +56,45 @@ class __DemoTableBodyState extends State<_DemoTableBody> {
         isRowCountLessDefaultRowsPerPage ? tableItemsCount : defaultRowsPerPage;
     return Scaffold(
       appBar: AppBar(
-        title: Text("Demo Paginated Table"),
+        title: Text("Demo Custom Paginated Table"),
       ),
       body: SingleChildScrollView(
         child: Column(
           children: [
-
-
-
-
             CustomPaginatedDataTable(
+              height: 600,
               header: Text('data with 7 rows per page'),
               // comparing the actual data length with the CustomDataTable.defaultRowsPerPage and then assigning it to _rowPerPage1 variable which then set using the setsState()
-              onRowsPerPageChanged:
-                  isRowCountLessDefaultRowsPerPage // The source of problem!
-                      ? null
-                      : (rowCount) {
-                          setState(() {
-                            _rowsPerPage1 = rowCount!;
-                          });
-                        },
-              columns: List.generate(n_col, (index) => CustomDataColumn(label: SizedBox(child: Text("head $index"),width: 150,))),
+              // onRowsPerPageChanged:
+              //     isRowCountLessDefaultRowsPerPage // The source of problem!
+              //         ? null
+              //         : (rowCount) {
+              //             setState(() {
+              //               _rowsPerPage1 = rowCount!;
+              //             });
+              //           },
+              columns: List.generate(
+                  n_col,
+                  (index) => CustomDataColumn(
+                        label: Text("head $index"),
+                      )),
+              getColumnsWidth: (index) => 150,
               source: dts,
-              rowsPerPage: 10,
+              rowsPerPage: 20,
               showCheckboxColumn: true,
+              showColumnNumber: 4,
+              customColumnsIndex: [4, 5, 6, 7, 8, 9],
+              sortColumnIndexList: List.generate(20, (index) => index * 2 + 1),
+              sortAscending: true,
+              onSort: (int a, int b, int column) {
+                if (a % column != b % column)
+                  return a % column - b % column;
+                else {
+                  return b - a;
+                }
+              },
+              availableRowsPerPage: [10, 20, 50, 100, 200, 500],
             ),
-
-
-
           ],
         ),
       ),
@@ -101,18 +112,16 @@ class DTS extends CustomDataTableSource {
 
   @override
   CustomDataRow getRow(int index) {
-    // ValueNotifier<bool> selected = ValueNotifier<bool>(false);
-    // ValueNotifier<bool> showCheckbox = ValueNotifier<bool>(false);
     ValueNotifier<bool> selected = ValueNotifier<bool>(false);
 
     return CustomDataRow.byIndex(
       selected: selected,
-      // showCheckBox: showCheckbox,
       index: index,
-      cells: List.generate(n_col, (columnIndex) => CustomDataCell(SizedBox(child: Text("col$columnIndex : row$index"),width: 150,)),),
-      onSelectChanged: (bool){
-        // print(selected);
-        // selected.value = !selected.value;
+      cells: List.generate(
+        n_col,
+        (columnIndex) => CustomDataCell(Text("col$columnIndex : row$index")),
+      ),
+      onSelectChanged: (bool) {
         selected.value = !selected.value;
         print(selected.value);
       },
@@ -127,5 +136,4 @@ class DTS extends CustomDataTableSource {
 
   @override
   int get selectedRowCount => 0;
-
 }

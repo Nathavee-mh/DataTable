@@ -4,6 +4,7 @@
 
 import 'dart:math' as math;
 
+import 'package:custom_datatable/base_scrollbar.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
@@ -24,7 +25,6 @@ import 'custom_data_table_source.dart';
 // import 'material_localizations.dart';
 // import 'progress_indicator.dart';
 // import 'theme.dart';
-
 
 /// A material design data table that shows data using multiple pages.
 ///
@@ -69,12 +69,31 @@ class CustomPaginatedDataTable extends StatefulWidget {
   /// Themed by [DataTableTheme]. [DataTableThemeData.decoration] is ignored.
   /// To modify the border or background color of the [PaginatedDataTable], use
   /// [CardTheme], since a [Card] wraps the inner [DataTable].
+  ///
+  List<int>? customColumnsIndex;
+  final List<int>? sortedIndexList;
+  List<int> allSortedIndexList = <int>[];
+  int Function(int a, int b, int column) onSort;
+  int showColumnNumber;
+  double Function(int index) getColumnsWidth;
+  String? addColumnTooltip;
+  final double height;
+
+  ///
   CustomPaginatedDataTable({
     Key? key,
+    this.customColumnsIndex,
+    this.sortedIndexList,
+    required this.onSort,
+    required this.getColumnsWidth,
+    required this.height,
+    this.addColumnTooltip,
+    this.showColumnNumber = 1,
     this.header,
     this.actions,
     required this.columns,
     this.sortColumnIndex,
+    this.sortColumnIndexList,
     this.sortAscending = true,
     this.onSelectAll,
     this.dataRowHeight = kMinInteractiveDimension,
@@ -86,32 +105,33 @@ class CustomPaginatedDataTable extends StatefulWidget {
     this.initialFirstRowIndex = 0,
     this.onPageChanged,
     this.rowsPerPage = defaultRowsPerPage,
-    this.availableRowsPerPage = const <int>[defaultRowsPerPage, defaultRowsPerPage * 2, defaultRowsPerPage * 5, defaultRowsPerPage * 10],
-    this.onRowsPerPageChanged,
-    this.dragStartBehavior = DragStartBehavior.start,
+    this.availableRowsPerPage = const <int>[],
+    // this.onRowsPerPageChanged,
     required this.source,
+    this.dragStartBehavior = DragStartBehavior.start,
     this.checkboxHorizontalMargin,
-  }) : assert(actions == null || (actions != null && header != null)),
-       assert(columns != null),
-       assert(dragStartBehavior != null),
-       assert(columns.isNotEmpty),
-       assert(sortColumnIndex == null || (sortColumnIndex >= 0 && sortColumnIndex < columns.length)),
-       assert(sortAscending != null),
-       assert(dataRowHeight != null),
-       assert(headingRowHeight != null),
-       assert(horizontalMargin != null),
-       assert(columnSpacing != null),
-       assert(showCheckboxColumn != null),
-       assert(showFirstLastButtons != null),
-       assert(rowsPerPage != null),
-       assert(rowsPerPage > 0),
-       assert(() {
-         if (onRowsPerPageChanged != null)
-           assert(availableRowsPerPage != null && availableRowsPerPage.contains(rowsPerPage));
-         return true;
-       }()),
-       assert(source != null),
-       super(key: key);
+  })  : assert(actions == null || (actions != null && header != null)),
+        assert(columns != null),
+        assert(dragStartBehavior != null),
+        assert(columns.isNotEmpty),
+        assert(sortColumnIndex == null ||
+            (sortColumnIndex >= 0 && sortColumnIndex < columns.length)),
+        assert(sortAscending != null),
+        assert(dataRowHeight != null),
+        assert(headingRowHeight != null),
+        assert(horizontalMargin != null),
+        assert(columnSpacing != null),
+        assert(showCheckboxColumn != null),
+        assert(showFirstLastButtons != null),
+        assert(rowsPerPage != null),
+        assert(rowsPerPage > 0),
+        //  assert(() {
+        //    if (onRowsPerPageChanged != null)
+        //      assert(availableRowsPerPage != null && availableRowsPerPage.contains(rowsPerPage));
+        //    return true;
+        //  }()),
+        assert(source != null),
+        super(key: key);
 
   /// The table card's optional header.
   ///
@@ -140,6 +160,7 @@ class CustomPaginatedDataTable extends StatefulWidget {
   ///
   /// See [DataTable.sortColumnIndex].
   final int? sortColumnIndex;
+  final List<int>? sortColumnIndexList;
 
   /// Whether the column mentioned in [sortColumnIndex], if any, is sorted
   /// in ascending order.
@@ -202,7 +223,7 @@ class CustomPaginatedDataTable extends StatefulWidget {
   ///
   ///  * [onRowsPerPageChanged]
   ///  * [defaultRowsPerPage]
-  final int rowsPerPage;
+  int rowsPerPage;
 
   /// The default value for [rowsPerPage].
   ///
@@ -221,7 +242,7 @@ class CustomPaginatedDataTable extends StatefulWidget {
   ///
   /// If this is null, then the value given by [rowsPerPage] will be used
   /// and no affordance will be provided to change the value.
-  final ValueChanged<int?>? onRowsPerPageChanged;
+  // final ValueChanged<int?>? onRowsPerPageChanged;
 
   /// The data source which provides data to show in each row. Must be non-null.
   ///
@@ -241,7 +262,8 @@ class CustomPaginatedDataTable extends StatefulWidget {
   final double? checkboxHorizontalMargin;
 
   @override
-  CustomPaginatedDataTableState createState() => CustomPaginatedDataTableState();
+  CustomPaginatedDataTableState createState() =>
+      CustomPaginatedDataTableState();
 }
 
 /// Holds the state of a [PaginatedDataTable].
@@ -254,15 +276,42 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
   int _selectedRowCount = 0;
   final Map<int, CustomDataRow?> _rows = <int, CustomDataRow?>{};
 
+  int? sortedColumnIndex;
+  bool isSortup = true;
+
+  late SyncScrollController _syncScroller;
+
+  final ScrollController _fistScrollController = ScrollController();
+  final ScrollController _secondScrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
-    _firstRowIndex = PageStorage.of(context)?.readState(context) as int? ?? widget.initialFirstRowIndex ?? 0;
+    _firstRowIndex = PageStorage.of(context)?.readState(context) as int? ??
+        widget.initialFirstRowIndex ??
+        0;
     widget.source.addListener(_handleDataSourceChanged);
     _handleDataSourceChanged();
+
+    _syncScroller =
+        SyncScrollController([_fistScrollController, _secondScrollController]);
   }
 
   @override
+  void onRowsPerPageChanged(int? rowNumber) {
+    print(rowNumber);
+    if (rowNumber != null) {
+      widget.rowsPerPage = rowNumber;
+      setState(() {
+        
+      });
+    }
+  }
+
+  void setShowColumnNumber(int showColumnNumber){
+    widget.showColumnNumber = showColumnNumber;
+  }
+
   void didUpdateWidget(CustomPaginatedDataTable oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.source != widget.source) {
@@ -294,8 +343,7 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
       final int rowsPerPage = widget.rowsPerPage;
       _firstRowIndex = (rowIndex ~/ rowsPerPage) * rowsPerPage;
     });
-    if ((widget.onPageChanged != null) &&
-        (oldFirstRowIndex != _firstRowIndex))
+    if ((widget.onPageChanged != null) && (oldFirstRowIndex != _firstRowIndex))
       widget.onPageChanged!(_firstRowIndex);
   }
 
@@ -303,13 +351,17 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
     return CustomDataRow.byIndex(
       selected: ValueNotifier<bool>(false),
       index: index,
-      cells: widget.columns.map<CustomDataCell>((CustomDataColumn column) => CustomDataCell.empty).toList(),
+      cells: widget.columns
+          .map<CustomDataCell>(
+              (CustomDataColumn column) => CustomDataCell.empty)
+          .toList(),
     );
   }
 
   CustomDataRow _getProgressIndicatorRowFor(int index) {
     bool haveProgressIndicator = false;
-    final List<CustomDataCell> cells = widget.columns.map<CustomDataCell>((CustomDataColumn column) {
+    final List<CustomDataCell> cells =
+        widget.columns.map<CustomDataCell>((CustomDataColumn column) {
       if (!column.numeric) {
         haveProgressIndicator = true;
         return const CustomDataCell(CircularProgressIndicator());
@@ -334,7 +386,8 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
     for (int index = firstRowIndex; index < nextPageFirstRowIndex; index += 1) {
       CustomDataRow? row;
       if (index < _rowCount || _rowCountApproximate) {
-        row = _rows.putIfAbsent(index, () => widget.source.getRow(index));
+        row = _rows.putIfAbsent(widget.allSortedIndexList[index],
+            () => widget.source.getRow(widget.allSortedIndexList[index]));
         if (row == null && !haveProgressIndicator) {
           row ??= _getProgressIndicatorRowFor(index);
           haveProgressIndicator = true;
@@ -343,7 +396,24 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
       row ??= _getBlankRowFor(index);
       result.add(row);
     }
+    // print(widget.allSortedIndexList);
+
     return result;
+  }
+
+  void _handleSort(int column, int showColumnNumber) {
+    isSortup = sortedColumnIndex != column || !isSortup;
+
+    sortedColumnIndex = column;
+
+    setState(() {
+      if (isSortup) {
+        widget.allSortedIndexList.sort((a, b) => widget.onSort(a, b, column));
+      } else {
+        widget.allSortedIndexList = widget.allSortedIndexList.reversed.toList();
+      }
+      widget.showColumnNumber = showColumnNumber;
+    });
   }
 
   void _handleFirst() {
@@ -362,17 +432,35 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
     pageTo(((_rowCount - 1) / widget.rowsPerPage).floor() * widget.rowsPerPage);
   }
 
-  bool _isNextPageUnavailable() => !_rowCountApproximate &&
+  bool _isNextPageUnavailable() =>
+      !_rowCountApproximate &&
       (_firstRowIndex + widget.rowsPerPage >= _rowCount);
 
   final GlobalKey _tableKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
+    if (widget.customColumnsIndex == null) {
+      widget.customColumnsIndex =
+          List.generate(widget.columns.length, (index) => index);
+    }
+
+    if (widget.customColumnsIndex!.length < widget.columns.length) {
+      for (int i = 0; i < widget.columns.length; i++) {
+        if (!widget.customColumnsIndex!.contains(i)) {
+          widget.customColumnsIndex!.add(i);
+        }
+      }
+    }
+    if (widget.allSortedIndexList.isEmpty) {
+      widget.allSortedIndexList =
+          List.generate(widget.source.rowCount, (index) => index);
+    }
     // TODO(ianh): This whole build function doesn't handle RTL yet.
     assert(debugCheckHasMaterialLocalizations(context));
     final ThemeData themeData = Theme.of(context);
-    final MaterialLocalizations localizations = MaterialLocalizations.of(context);
+    final MaterialLocalizations localizations =
+        MaterialLocalizations.of(context);
     // HEADER
     final List<Widget> headerWidgets = <Widget>[];
     double startPadding = 24.0;
@@ -406,28 +494,31 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
     // FOOTER
     final TextStyle? footerTextStyle = themeData.textTheme.caption;
     final List<Widget> footerWidgets = <Widget>[];
-    if (widget.onRowsPerPageChanged != null) {
+    if (widget.availableRowsPerPage.isNotEmpty) {
       final List<Widget> availableRowsPerPage = widget.availableRowsPerPage
-        .where((int value) => value <= _rowCount || value == widget.rowsPerPage)
-        .map<DropdownMenuItem<int>>((int value) {
-          return DropdownMenuItem<int>(
-            value: value,
-            child: Text('$value'),
-          );
-        })
-        .toList();
+          .where(
+              (int value) => value <= _rowCount || value == widget.rowsPerPage)
+          .map<DropdownMenuItem<int>>((int value) {
+        return DropdownMenuItem<int>(
+          value: value,
+          child: Text('$value'),
+        );
+      }).toList();
       footerWidgets.addAll(<Widget>[
-        Container(width: 14.0), // to match trailing padding in case we overflow and end up scrolling
+        Container(
+            width:
+                14.0), // to match trailing padding in case we overflow and end up scrolling
         Text(localizations.rowsPerPageTitle),
         ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 64.0), // 40.0 for the text, 24.0 for the icon
+          constraints: const BoxConstraints(
+              minWidth: 64.0), // 40.0 for the text, 24.0 for the icon
           child: Align(
             alignment: AlignmentDirectional.centerEnd,
             child: DropdownButtonHideUnderline(
               child: DropdownButton<int>(
                 items: availableRowsPerPage.cast<DropdownMenuItem<int>>(),
                 value: widget.rowsPerPage,
-                onChanged: widget.onRowsPerPageChanged,
+                onChanged: onRowsPerPageChanged,
                 style: footerTextStyle,
                 iconSize: 24.0,
               ),
@@ -472,9 +563,7 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
           icon: const Icon(Icons.skip_next),
           padding: EdgeInsets.zero,
           tooltip: localizations.lastPageTooltip,
-          onPressed: _isNextPageUnavailable()
-              ? null
-              : _handleLast,
+          onPressed: _isNextPageUnavailable() ? null : _handleLast,
         ),
       Container(width: 14.0),
     ]);
@@ -487,6 +576,17 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
+              TextButton(
+                  onPressed: () {
+                    // int index = widget.allSortedIndexList.removeAt(14);
+                    // widget.allSortedIndexList.insert(0, index);
+                    // print(widget.allSortedIndexList);
+                    // setState(() {
+                    // widget.allSortedIndexList = widget.allSortedIndexList.reversed.toList();
+                    // });
+                    _handleSort(2, 7);
+                  },
+                  child: Text("sort column 2")),
               if (headerWidgets.isNotEmpty)
                 Semantics(
                   container: true,
@@ -494,17 +594,23 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
                     // These typographic styles aren't quite the regular ones. We pick the closest ones from the regular
                     // list and then tweak them appropriately.
                     // See https://material.io/design/components/data-tables.html#tables-within-cards
-                    style: _selectedRowCount > 0 ? themeData.textTheme.subtitle1!.copyWith(color: themeData.colorScheme.secondary)
-                                                 : themeData.textTheme.headline6!.copyWith(fontWeight: FontWeight.w400),
+                    style: _selectedRowCount > 0
+                        ? themeData.textTheme.subtitle1!
+                            .copyWith(color: themeData.colorScheme.secondary)
+                        : themeData.textTheme.headline6!
+                            .copyWith(fontWeight: FontWeight.w400),
                     child: IconTheme.merge(
                       data: const IconThemeData(
                         opacity: 0.54,
                       ),
                       child: Ink(
                         height: 64.0,
-                        color: _selectedRowCount > 0 ? themeData.secondaryHeaderColor : null,
+                        color: _selectedRowCount > 0
+                            ? themeData.secondaryHeaderColor
+                            : null,
                         child: Padding(
-                          padding: EdgeInsetsDirectional.only(start: startPadding, end: 14.0),
+                          padding: EdgeInsetsDirectional.only(
+                              start: startPadding, end: 14.0),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: headerWidgets,
@@ -514,29 +620,35 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
                     ),
                   ),
                 ),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                dragStartBehavior: widget.dragStartBehavior,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minWidth: constraints.minWidth),
-                  child: CustomDataTable(
-                    key: _tableKey,
-                    columns: widget.columns,
-                    sortColumnIndex: widget.sortColumnIndex,
-                    sortAscending: widget.sortAscending,
-                    onSelectAll: widget.onSelectAll,
-                    // Make sure no decoration is set on the DataTable
-                    // from the theme, as its already wrapped in a Card.
-                    decoration: const BoxDecoration(),
-                    dataRowHeight: widget.dataRowHeight,
-                    headingRowHeight: widget.headingRowHeight,
-                    horizontalMargin: widget.horizontalMargin,
-                    checkboxHorizontalMargin: widget.checkboxHorizontalMargin,
-                    columnSpacing: widget.columnSpacing,
-                    showCheckboxColumn: widget.showCheckboxColumn,
-                    showBottomBorder: true,
-                    rows: _getRows(_firstRowIndex, widget.rowsPerPage),
-                  ),
+              ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.minWidth),
+                child: CustomDataTable(
+                  key: _tableKey,
+                  customColumnsIndex: widget.customColumnsIndex!,
+                  sortedIndexList: widget.sortedIndexList ??
+                      List.generate(widget.rowsPerPage, (index) => index),
+                  columns: widget.columns,
+                  sortColumnIndex: sortedColumnIndex, //widget.sortColumnIndex,
+                  sortColumnIndexList: widget.sortColumnIndexList,
+                  sortAscending: isSortup, //widget.sortAscending,
+                  onSelectAll: widget.onSelectAll,
+                  onSortColumn: _handleSort,
+                  showColumnNumber: widget.showColumnNumber,
+                  getColumnsWidth: widget.getColumnsWidth,
+                  addColumnTooltip: widget.addColumnTooltip,
+                  height: widget.height,
+                  setshowColumnNumber: setShowColumnNumber,
+                  // Make sure no decoration is set on the DataTable
+                  // from the theme, as its already wrapped in a Card.
+                  decoration: const BoxDecoration(),
+                  dataRowHeight: widget.dataRowHeight,
+                  headingRowHeight: widget.headingRowHeight,
+                  horizontalMargin: widget.horizontalMargin,
+                  checkboxHorizontalMargin: widget.checkboxHorizontalMargin,
+                  columnSpacing: widget.columnSpacing,
+                  showCheckboxColumn: widget.showCheckboxColumn,
+                  showBottomBorder: true,
+                  rows: _getRows(_firstRowIndex, widget.rowsPerPage),
                 ),
               ),
               DefaultTextStyle(
@@ -565,5 +677,48 @@ class CustomPaginatedDataTableState extends State<CustomPaginatedDataTable> {
         );
       },
     );
+  }
+}
+
+class SyncScrollController {
+  final List<ScrollController> _registeredScrollControllers = [];
+
+  ScrollController? _scrollingController;
+  bool _scrollingActive = false;
+
+  SyncScrollController(List<ScrollController> controllers) {
+    controllers.forEach((controller) => registerScrollController(controller));
+  }
+
+  void registerScrollController(ScrollController controller) {
+    _registeredScrollControllers.add(controller);
+  }
+
+  void processNotification(
+      ScrollNotification notification, ScrollController sender) {
+    if (notification is ScrollStartNotification && !_scrollingActive) {
+      _scrollingController = sender;
+      _scrollingActive = true;
+      return;
+    }
+
+    if (identical(sender, _scrollingController) && _scrollingActive) {
+      if (notification is ScrollEndNotification) {
+        _scrollingController = null;
+        _scrollingActive = false;
+        return;
+      }
+
+      if (notification is ScrollUpdateNotification) {
+        _registeredScrollControllers.forEach((controller) => {
+              if (!identical(_scrollingController, controller))
+                {
+                  if (_scrollingController != null)
+                    {controller..jumpTo(_scrollingController!.offset)}
+                }
+            });
+        return;
+      }
+    }
   }
 }
